@@ -74,6 +74,10 @@ app.use('/uploads', (req, res, next) => {
   next();
 }, express.static(path.join(__dirname, '../uploads')));
 
+app.get('/api/health', (req, res) => {
+  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
 app.use('/api/auth', authRoutes);
 app.use('/api/categories', categoriesRoutes);
 app.use('/api/shops', shopsRoutes);
