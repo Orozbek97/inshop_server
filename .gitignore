@@ -28,10 +28,6 @@ $RECYCLE.BIN/
 *.swp
 *.swo
 *~  
-# Ignore lock files
-package-lock.json
-yarn.lock
-pnpm-lock.yaml
 # Ignore test coverage directory
 coverage/
 # Ignore build output directories
