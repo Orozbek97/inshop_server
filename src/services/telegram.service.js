@@ -13,9 +13,11 @@ if (!BOT_TOKEN || !CHAT_ID) {
 let bot = null;
 
 if (BOT_TOKEN && CHAT_ID) {
-  bot = new TelegramBot(BOT_TOKEN, { polling: true });
-  
-  bot.on('callback_query', async (callbackQuery) => {
+  try {
+    bot = new TelegramBot(BOT_TOKEN, { polling: true });
+    console.log('Telegram bot initialized');
+    
+    bot.on('callback_query', async (callbackQuery) => {
     const chatId = callbackQuery.message?.chat?.id?.toString();
     
     if (chatId !== CHAT_ID) {
@@ -149,8 +151,18 @@ if (BOT_TOKEN && CHAT_ID) {
       }
     }
   });
-  
-  logger.info('Telegram bot polling started');
+    
+    bot.on('error', (error) => {
+      console.error('Telegram bot error:', error.message);
+      logger.error('Telegram bot error', { error });
+    });
+    
+    logger.info('Telegram bot polling started');
+  } catch (error) {
+    console.error('Failed to initialize Telegram bot:', error.message);
+    logger.error('Failed to initialize Telegram bot', { error });
+    bot = null;
+  }
 }
 
 async function sendModerationNotification(shop, userEmail = null) {

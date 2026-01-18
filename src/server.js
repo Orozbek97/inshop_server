@@ -30,8 +30,16 @@ try {
 }
 
 console.log('Loading app...');
-const app = require('./app');
-console.log('App loaded');
+let app;
+try {
+  app = require('./app');
+  console.log('App loaded successfully');
+} catch (error) {
+  console.error('❌ Failed to load app:', error.message);
+  console.error('Stack:', error.stack);
+  logger.error('Failed to load app', { error });
+  process.exit(1);
+}
 
 const PORT = process.env.PORT || 5000;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -49,11 +57,14 @@ app.listen(PORT, HOST, () => {
 });
 
 process.on('uncaughtException', (error) => {
+  console.error('❌ Uncaught Exception:', error);
+  console.error('Stack:', error.stack);
   logger.error('Uncaught Exception', { error });
   process.exit(1);
 });
 
 process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ Unhandled Rejection:', reason);
   logger.error('Unhandled Rejection', { reason, promise });
   process.exit(1);
 });
