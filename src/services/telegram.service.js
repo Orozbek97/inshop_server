@@ -14,8 +14,7 @@ let bot = null;
 
 if (BOT_TOKEN && CHAT_ID) {
   try {
-    bot = new TelegramBot(BOT_TOKEN, { polling: true });
-    console.log('Telegram bot initialized');
+    bot = new TelegramBot(BOT_TOKEN, { polling: { interval: 3000, autoStart: false } });
     
     bot.on('callback_query', async (callbackQuery) => {
     const chatId = callbackQuery.message?.chat?.id?.toString();
@@ -153,13 +152,27 @@ if (BOT_TOKEN && CHAT_ID) {
   });
     
     bot.on('error', (error) => {
-      console.error('Telegram bot error:', error.message);
-      logger.error('Telegram bot error', { error });
+      if (error.code !== 'ETELEGRAM' || !error.message.includes('409')) {
+        logger.error('Telegram bot error', { error });
+      }
     });
     
-    logger.info('Telegram bot polling started');
+    bot.on('polling_error', (error) => {
+      if (error.code !== 'ETELEGRAM' || !error.message.includes('409')) {
+        logger.error('Telegram polling error', { error });
+      }
+    });
+    
+    try {
+      bot.startPolling();
+      logger.info('Telegram bot polling started');
+    } catch (pollingError) {
+      if (pollingError.code !== 'ETELEGRAM' || !pollingError.message.includes('409')) {
+        logger.warn('Telegram bot polling failed', { error: pollingError });
+      }
+      bot = null;
+    }
   } catch (error) {
-    console.error('Failed to initialize Telegram bot:', error.message);
     logger.error('Failed to initialize Telegram bot', { error });
     bot = null;
   }
