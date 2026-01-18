@@ -4,8 +4,8 @@ WORKDIR /app
 
 RUN addgroup -g 1001 -S nodejs && \
     adduser -S nodejs -u 1001 && \
-    mkdir -p /app/logs && \
-    chown -R nodejs:nodejs /app/logs
+    mkdir -p /app/logs /app/uploads/shops /app/uploads/payment_requests && \
+    chown -R nodejs:nodejs /app/logs /app/uploads
 
 COPY --chown=nodejs:nodejs package*.json ./
 
