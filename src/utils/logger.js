@@ -1,9 +1,18 @@
 const winston = require('winston');
 const DailyRotateFile = require('winston-daily-rotate-file');
 const path = require('path');
+const fs = require('fs');
 
 const logDir = path.join(__dirname, '../../logs');
 const isProduction = process.env.NODE_ENV === 'production';
+
+try {
+  if (!fs.existsSync(logDir)) {
+    fs.mkdirSync(logDir, { recursive: true });
+  }
+} catch (error) {
+  console.error('Failed to create logs directory:', error.message);
+}
 
 const logFormat = winston.format.combine(
   winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
@@ -42,14 +51,12 @@ const transports = [
   combinedRotateTransport,
 ];
 
-if (!isProduction) {
-  transports.push(
-    new winston.transports.Console({
-      format: consoleFormat,
-      level: 'debug',
-    })
-  );
-}
+transports.push(
+  new winston.transports.Console({
+    format: consoleFormat,
+    level: isProduction ? 'info' : 'debug',
+  })
+);
 
 const logger = winston.createLogger({
   level: isProduction ? 'info' : 'debug',
