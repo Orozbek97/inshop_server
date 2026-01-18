@@ -14,9 +14,13 @@ const validateEnvVars = () => {
   const missing = [];
   const warnings = [];
 
+  console.log('Checking required environment variables...');
   requiredEnvVars.forEach(varName => {
     if (!process.env[varName]) {
+      console.error(`Missing required env var: ${varName}`);
       missing.push(varName);
+    } else {
+      console.log(`✓ ${varName} is set`);
     }
   });
 
