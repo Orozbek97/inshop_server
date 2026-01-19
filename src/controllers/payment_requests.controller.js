@@ -1,8 +1,10 @@
 const paymentRequestsService = require('../services/payment_requests.service');
 const shopsService = require('../services/shops.service');
 const telegramService = require('../services/telegram.service');
+const r2Service = require('../services/r2.service');
 const pool = require('../db');
 const logger = require('../utils/logger');
+const path = require('path');
 
 async function createPaymentRequest(req, res) {
   try {
@@ -25,7 +27,11 @@ async function createPaymentRequest(req, res) {
     
     let receipt_url = null;
     if (req.file) {
-      receipt_url = `/uploads/payment_requests/${req.file.filename}`;
+      const timestamp = Date.now();
+      const random = Math.random().toString(36).substring(2, 8);
+      const ext = path.extname(req.file.originalname);
+      const filename = `${timestamp}-${random}${ext}`;
+      receipt_url = await r2Service.uploadFile(req.file.buffer, filename, 'payment_requests');
     }
     
     const paymentRequest = await paymentRequestsService.createPaymentRequest({

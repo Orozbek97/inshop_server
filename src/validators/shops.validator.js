@@ -16,7 +16,13 @@ const shopBaseValidator = [
   body('instagram_url')
     .trim()
     .notEmpty().withMessage('Instagram URL is required')
-    .isURL().withMessage('Invalid Instagram URL format'),
+    .custom((value) => {
+      const instagramPattern = /^(https?:\/\/)?(www\.)?(instagram\.com\/|@)?[a-zA-Z0-9_.]+$/;
+      if (!instagramPattern.test(value)) {
+        throw new Error('Invalid Instagram URL format. Use @username, instagram.com/username, or full URL');
+      }
+      return true;
+    }),
   body('phone')
     .optional()
     .trim()

@@ -1,7 +1,9 @@
 const shopsService = require('../services/shops.service');
 const telegramService = require('../services/telegram.service');
+const r2Service = require('../services/r2.service');
 const pool = require('../db');
 const logger = require('../utils/logger');
+const path = require('path');
 
 async function getAllShops(req, res) {
   try {
@@ -59,6 +61,13 @@ async function getShopBySlug(req, res) {
   }
 }
 
+function generateFilename(originalname) {
+  const timestamp = Date.now();
+  const random = Math.random().toString(36).substring(2, 8);
+  const ext = path.extname(originalname);
+  return `${timestamp}-${random}${ext}`;
+}
+
 async function createShop(req, res) {
   try {
     const { name, instagram_url, phone, category_id, district, description } = req.body;
@@ -70,18 +79,37 @@ async function createShop(req, res) {
     let cover_image_url = null;
     let original_image_url = null;
     
-    if (req.files) {
-      if (req.files.coverImage && req.files.coverImage[0]) {
-        cover_image_url = `/uploads/shops/${req.files.coverImage[0].filename}`;
+    try {
+      if (req.files) {
+        if (req.files.coverImage && req.files.coverImage[0]) {
+          const file = req.files.coverImage[0];
+          if (!file.buffer) {
+            return res.status(400).json({ error: 'Invalid file upload' });
+          }
+          const filename = generateFilename(file.originalname);
+          cover_image_url = await r2Service.uploadFile(file.buffer, filename, 'shops');
+        }
+        if (req.files.originalImage && req.files.originalImage[0]) {
+          const file = req.files.originalImage[0];
+          if (!file.buffer) {
+            return res.status(400).json({ error: 'Invalid file upload' });
+          }
+          const filename = generateFilename(file.originalname);
+          original_image_url = await r2Service.uploadFile(file.buffer, filename, 'shops');
+        }
       }
-      if (req.files.originalImage && req.files.originalImage[0]) {
-        original_image_url = `/uploads/shops/${req.files.originalImage[0].filename}`;
+      
+      if (req.file) {
+        if (!req.file.buffer) {
+          return res.status(400).json({ error: 'Invalid file upload' });
+        }
+        const filename = generateFilename(req.file.originalname);
+        cover_image_url = await r2Service.uploadFile(req.file.buffer, filename, 'shops');
+        original_image_url = cover_image_url;
       }
-    }
-    
-    if (req.file) {
-      cover_image_url = `/uploads/shops/${req.file.filename}`;
-      original_image_url = cover_image_url;
+    } catch (uploadError) {
+      logger.error('Error uploading file to R2', { error: uploadError });
+      return res.status(500).json({ error: 'Failed to upload image' });
     }
     
     const user_id = parseInt(req.user.id);
@@ -174,56 +202,41 @@ async function updateShop(req, res) {
       return res.status(400).json({ error: 'Invalid category_id' });
     }
     
-    const fs = require('fs');
-    const path = require('path');
-    const uploadsBasePath = path.join(__dirname, '../../uploads');
-    
-    // Функция для безопасного удаления файла
-    const deleteImageFile = (imagePath) => {
-      if (!imagePath) return;
+    const deleteImageFile = async (imageUrl) => {
+      if (!imageUrl) return;
       try {
-        // Путь в БД: /uploads/shops/filename
-        // Физический путь: server/uploads/shops/filename
-        let cleanPath = imagePath;
-        if (cleanPath.startsWith('/uploads/')) {
-          cleanPath = cleanPath.substring('/uploads/'.length); // убираем /uploads/
-        } else if (cleanPath.startsWith('uploads/')) {
-          cleanPath = cleanPath.substring('uploads/'.length); // убираем uploads/
+        const key = r2Service.getKeyFromUrl(imageUrl);
+        if (key) {
+          await r2Service.deleteFile(key);
         }
-        const fullPath = path.join(uploadsBasePath, cleanPath);
-        if (fs.existsSync(fullPath)) {
-          fs.unlinkSync(fullPath);
-          logger.info(`Deleted old image: ${fullPath}`);
-        }
-        // Не логируем, если файл уже не существует - это нормальная ситуация
       } catch (error) {
-        // Логируем только реальные ошибки (например, проблемы с правами доступа)
-        logger.error(`Error deleting image file ${imagePath}`, { error });
+        logger.error(`Error deleting image file from R2: ${imageUrl}`, { error });
       }
     };
     
     let cover_image_url = existingShop.cover_image_url;
     let original_image_url = existingShop.original_image_url;
     
-    // Если загружается новое изображение, удаляем все старые
     if (req.files) {
       if (req.files.coverImage && req.files.coverImage[0]) {
-        // Удаляем все старые изображения
-        if (existingShop.cover_image_url) deleteImageFile(existingShop.cover_image_url);
+        if (existingShop.cover_image_url) await deleteImageFile(existingShop.cover_image_url);
         if (existingShop.original_image_url && existingShop.original_image_url !== existingShop.cover_image_url) {
-          deleteImageFile(existingShop.original_image_url);
+          await deleteImageFile(existingShop.original_image_url);
         }
         if (existingShop.image_url && existingShop.image_url !== existingShop.cover_image_url && existingShop.image_url !== existingShop.original_image_url) {
-          deleteImageFile(existingShop.image_url);
+          await deleteImageFile(existingShop.image_url);
         }
-        cover_image_url = `/uploads/shops/${req.files.coverImage[0].filename}`;
+        const file = req.files.coverImage[0];
+        const filename = generateFilename(file.originalname);
+        cover_image_url = await r2Service.uploadFile(file.buffer, filename, 'shops');
         original_image_url = cover_image_url;
       }
       
       if (req.files.originalImage && req.files.originalImage[0]) {
-        // Если originalImage загружается отдельно
-        if (existingShop.original_image_url) deleteImageFile(existingShop.original_image_url);
-        original_image_url = `/uploads/shops/${req.files.originalImage[0].filename}`;
+        if (existingShop.original_image_url) await deleteImageFile(existingShop.original_image_url);
+        const file = req.files.originalImage[0];
+        const filename = generateFilename(file.originalname);
+        original_image_url = await r2Service.uploadFile(file.buffer, filename, 'shops');
         if (!cover_image_url) {
           cover_image_url = original_image_url;
         }
@@ -231,16 +244,16 @@ async function updateShop(req, res) {
     }
     
     if (req.file) {
-      // Удаляем все старые изображения
-      if (existingShop.cover_image_url) deleteImageFile(existingShop.cover_image_url);
+      if (existingShop.cover_image_url) await deleteImageFile(existingShop.cover_image_url);
       if (existingShop.original_image_url && existingShop.original_image_url !== existingShop.cover_image_url) {
-        deleteImageFile(existingShop.original_image_url);
+        await deleteImageFile(existingShop.original_image_url);
       }
       if (existingShop.image_url && existingShop.image_url !== existingShop.cover_image_url && existingShop.image_url !== existingShop.original_image_url) {
-        deleteImageFile(existingShop.image_url);
+        await deleteImageFile(existingShop.image_url);
       }
       
-      cover_image_url = `/uploads/shops/${req.file.filename}`;
+      const filename = generateFilename(req.file.originalname);
+      cover_image_url = await r2Service.uploadFile(req.file.buffer, filename, 'shops');
       original_image_url = cover_image_url;
     }
     
@@ -340,17 +353,16 @@ async function deleteShop(req, res) {
       return res.status(404).json({ error: 'Shop not found' });
     }
     
-    if (shop.image_url) {
-      const fs = require('fs');
-      const path = require('path');
-      const imagePath = path.join(__dirname, '../../uploads', shop.image_url);
-      
-      if (fs.existsSync(imagePath)) {
-        try {
-          fs.unlinkSync(imagePath);
-        } catch (fileError) {
-          logger.error('Error deleting image file:', fileError);
-        }
+    if (shop.cover_image_url) {
+      const key = r2Service.getKeyFromUrl(shop.cover_image_url);
+      if (key) {
+        await r2Service.deleteFile(key);
+      }
+    }
+    if (shop.original_image_url && shop.original_image_url !== shop.cover_image_url) {
+      const key = r2Service.getKeyFromUrl(shop.original_image_url);
+      if (key) {
+        await r2Service.deleteFile(key);
       }
     }
     
