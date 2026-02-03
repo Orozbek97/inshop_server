@@ -8,11 +8,16 @@ const path = require('path');
 
 async function createPaymentRequest(req, res) {
   try {
-    const { shop_id, amount } = req.body;
+    const { shop_id, amount, tariff } = req.body;
     const user_id = parseInt(req.user.id);
     
     if (!shop_id || !amount) {
       return res.status(400).json({ error: 'Missing required fields' });
+    }
+    
+    // Проверяем тариф, если указан
+    if (tariff && !['start', 'standard', 'pro'].includes(tariff)) {
+      return res.status(400).json({ error: 'Invalid tariff' });
     }
     
     // Проверяем, что магазин принадлежит пользователю
@@ -39,6 +44,7 @@ async function createPaymentRequest(req, res) {
       user_id,
       amount: parseFloat(amount),
       receipt_url,
+      tariff: tariff || null,
     });
     
     // Получаем полную информацию о запросе для Telegram

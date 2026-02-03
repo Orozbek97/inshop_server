@@ -1,15 +1,15 @@
 const pool = require('../db');
 
 async function createPaymentRequest(paymentData) {
-  const { shop_id, user_id, amount, receipt_url } = paymentData;
+  const { shop_id, user_id, amount, receipt_url, tariff } = paymentData;
   
   const query = `
-    INSERT INTO payment_requests (shop_id, user_id, amount, receipt_url, status)
-    VALUES ($1, $2, $3, $4, 'waiting')
+    INSERT INTO payment_requests (shop_id, user_id, amount, receipt_url, tariff, status)
+    VALUES ($1, $2, $3, $4, $5, 'waiting')
     RETURNING *
   `;
   
-  const values = [shop_id, user_id, amount, receipt_url || null];
+  const values = [shop_id, user_id, amount, receipt_url || null, tariff || null];
   const result = await pool.query(query, values);
   return result.rows[0];
 }

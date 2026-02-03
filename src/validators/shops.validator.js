@@ -29,6 +29,7 @@ const shopBaseValidator = [
     .matches(/^[+]?[\d\s-()]+$/).withMessage('Invalid phone format'),
   body('category_id')
     .notEmpty().withMessage('Category ID is required')
+    .toInt()
     .isInt({ min: 1 }).withMessage('Category ID must be a positive integer'),
   body('district')
     .optional()
@@ -40,7 +41,12 @@ const shopBaseValidator = [
     .isLength({ max: 1000 }).withMessage('Description must not exceed 1000 characters'),
   body('delivery')
     .optional()
-    .isBoolean().withMessage('Delivery must be a boolean'),
+    .custom((value) => {
+      if (value === undefined || value === null) return true;
+      if (typeof value === 'boolean') return true;
+      if (value === 'true' || value === 'false' || value === '1' || value === '0') return true;
+      throw new Error('Delivery must be a boolean or string "true"/"false"');
+    }),
 ];
 
 const createShopValidator = [

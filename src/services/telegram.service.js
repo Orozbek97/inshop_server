@@ -106,8 +106,13 @@ if (BOT_TOKEN && CHAT_ID) {
           // Обновляем статус запроса
           await paymentRequestsService.updatePaymentRequestStatus(paymentRequestId, 'approved');
           
-          // Продлеваем подписку
-          await shopsService.extendSubscription(paymentRequest.shop_id, 30);
+          // Обновляем тариф и продлеваем подписку
+          if (paymentRequest.tariff) {
+            await shopsService.updateShopTariffAndExtend(paymentRequest.shop_id, paymentRequest.tariff, 30);
+          } else {
+            // Для обратной совместимости, если тариф не указан
+            await shopsService.extendSubscription(paymentRequest.shop_id, 30);
+          }
           
           const originalText = callbackQuery.message.text || '';
           const newText = `✅ Подтверждено\n\n${originalText}`;
@@ -123,7 +128,11 @@ if (BOT_TOKEN && CHAT_ID) {
           
           // Получаем обновленный магазин для отображения новой даты
           const shop = await shopsService.getShopById(paymentRequest.shop_id);
-          await bot.sendMessage(chatId, `✅ Подписка продлена до ${new Date(shop.subscription_expires_at).toLocaleDateString('ru-RU')}`);
+          let successMessage = `✅ Подписка продлена до ${new Date(shop.subscription_expires_at).toLocaleDateString('ru-RU')}`;
+          if (paymentRequest.tariff) {
+            successMessage += `\n📦 Тариф изменен на: ${paymentRequest.tariff.toUpperCase()}`;
+          }
+          await bot.sendMessage(chatId, successMessage);
         } else if (action === 'reject_payment') {
           // Обновляем статус запроса
           await paymentRequestsService.updatePaymentRequestStatus(paymentRequestId, 'rejected');
@@ -258,12 +267,16 @@ async function sendPaymentNotification(paymentRequest, shop) {
       ? shop.instagram_url.replace(/.*instagram\.com\//, '').replace(/\/.*/, '').replace('@', '')
       : 'не указан';
     
-    let message = `💳 Продление подписки
+    const tariffInfo = paymentRequest.tariff 
+      ? `\n📦 Смена тарифа на: ${paymentRequest.tariff.toUpperCase()}\n📊 Текущий тариф: ${shop.tariff || 'start'}` 
+      : '';
+    const title = paymentRequest.tariff ? '💳 Смена тарифа' : '💳 Продление подписки';
+    let message = `${title}
 
 🏪 Магазин: ${shop.name}
 🆔 Shop ID: ${shop.id}
 👤 Владелец: @${instagramUsername}
-💰 Сумма: ${paymentRequest.amount} сом
+💰 Сумма: ${paymentRequest.amount} сом${tariffInfo}
 
 `;
     

@@ -5,7 +5,7 @@ const logger = require('../utils/logger');
 function checkShopOwnership(req, res, next) {
   authMiddleware(req, res, async () => {
     try {
-      const shopId = req.params.id || req.params.slug;
+      const shopId = req.params.id || req.params.slug || req.params.shopId;
       
       if (!shopId) {
         return res.status(400).json({ error: 'Shop ID or slug required' });
@@ -16,7 +16,7 @@ function checkShopOwnership(req, res, next) {
       
       if (shopId && !isNaN(parseInt(shopId))) {
         query = 'SELECT user_id FROM shops WHERE id = $1';
-        params = [parseInt(shopId)];
+        params = [parseInt(shopId, 10)];
       } else {
         query = 'SELECT user_id FROM shops WHERE slug = $1';
         params = [shopId];

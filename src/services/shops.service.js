@@ -63,49 +63,159 @@ async function getAllShops() {
       c.slug as category_slug,
       COALESCE((
         SELECT json_build_object(
-          'likes', COUNT(*) FILTER (WHERE r.rating = 1),
-          'dislikes', COUNT(*) FILTER (WHERE r.rating = -1),
-          'reviews_count', COUNT(*)
+          'likes', COALESCE((SELECT COUNT(*) FROM shop_reactions WHERE shop_id = s.id AND rating = 1), 0),
+          'dislikes', COALESCE((SELECT COUNT(*) FROM shop_reactions WHERE shop_id = s.id AND rating = -1), 0),
+          'reactions_count', COALESCE((SELECT COUNT(*) FROM shop_reactions WHERE shop_id = s.id), 0),
+          'reviews_count', COALESCE((SELECT COUNT(*) FROM shop_reviews WHERE shop_id = s.id), 0)
         )
-        FROM reviews r
-        WHERE r.shop_id = s.id
-      ), '{"likes": 0, "dislikes": 0, "reviews_count": 0}'::json) as reviews_summary
+      ), '{"likes": 0, "dislikes": 0, "reactions_count": 0, "reviews_count": 0}'::json) as reviews_summary
     FROM shops s
     LEFT JOIN categories c ON s.category_id = c.id
     WHERE (s.moderation_status = 'approved' OR s.moderation_status IS NULL)
       AND (s.is_active = true OR s.is_active IS NULL)
       AND (s.subscription_expires_at > NOW() OR s.subscription_expires_at IS NULL)
-    ORDER BY s.is_paid DESC, s.created_at DESC
+    ORDER BY 
+      CASE 
+        WHEN s.tariff = 'pro' THEN 1
+        WHEN s.tariff = 'standard' THEN 2
+        WHEN s.tariff = 'start' THEN 3
+        ELSE 3
+      END,
+      s.is_paid DESC, 
+      s.created_at DESC
   `;
   const result = await pool.query(query);
   return result.rows;
 }
 
-async function getShopsByCategorySlug(categorySlug) {
-  const query = `
+async function getShopsByCategorySlug(categorySlug, options = {}) {
+  const { search, sortBy = 'popularity', page = 1, limit = 20 } = options;
+  
+  let whereConditions = [
+    'c.slug = $1',
+    "(s.moderation_status = 'approved' OR s.moderation_status IS NULL)",
+    "(s.is_active = true OR s.is_active IS NULL)",
+    "(s.subscription_expires_at > NOW() OR s.subscription_expires_at IS NULL)"
+  ];
+  
+  const params = [categorySlug];
+  let paramIndex = 2;
+  
+  // Добавляем поиск
+  if (search && search.trim()) {
+    whereConditions.push(`(s.name ILIKE $${paramIndex} OR s.description ILIKE $${paramIndex})`);
+    params.push(`%${search.trim()}%`);
+    paramIndex++;
+  }
+  
+  const whereClause = whereConditions.join(' AND ');
+  
+  // Определяем сортировку
+  let orderBy = `
+    CASE 
+      WHEN s.tariff = 'pro' THEN 1
+      WHEN s.tariff = 'standard' THEN 2
+      WHEN s.tariff = 'start' THEN 3
+      ELSE 3
+    END,
+    s.is_paid DESC,
+    s.created_at DESC
+  `;
+  
+  switch (sortBy) {
+    case 'newest':
+      orderBy = `
+        CASE 
+          WHEN s.tariff = 'pro' THEN 1
+          WHEN s.tariff = 'standard' THEN 2
+          WHEN s.tariff = 'start' THEN 3
+          ELSE 3
+        END,
+        s.created_at DESC
+      `;
+      break;
+    case 'popularity':
+      orderBy = `
+        CASE 
+          WHEN s.tariff = 'pro' THEN 1
+          WHEN s.tariff = 'standard' THEN 2
+          WHEN s.tariff = 'start' THEN 3
+          ELSE 3
+        END,
+        COALESCE(s.views, 0) DESC,
+        s.created_at DESC
+      `;
+      break;
+    case 'rating':
+      orderBy = `
+        CASE 
+          WHEN s.tariff = 'pro' THEN 1
+          WHEN s.tariff = 'standard' THEN 2
+          WHEN s.tariff = 'start' THEN 3
+          ELSE 3
+        END,
+        (SELECT COUNT(*) FROM shop_reactions WHERE shop_id = s.id AND rating = 1) DESC,
+        s.created_at DESC
+      `;
+      break;
+    case 'name':
+      orderBy = `
+        CASE 
+          WHEN s.tariff = 'pro' THEN 1
+          WHEN s.tariff = 'standard' THEN 2
+          WHEN s.tariff = 'start' THEN 3
+          ELSE 3
+        END,
+        s.name ASC
+      `;
+      break;
+    default:
+      break;
+  }
+  
+  // Подсчет общего количества
+  const countQuery = `
+    SELECT COUNT(*)::int AS total
+    FROM shops s
+    INNER JOIN categories c ON s.category_id = c.id
+    WHERE ${whereClause}
+  `;
+  const countResult = await pool.query(countQuery, params);
+  const total = countResult.rows[0]?.total || 0;
+  
+  // Получение данных с пагинацией
+  const offset = (page - 1) * limit;
+  const dataQuery = `
     SELECT 
       s.*,
       c.name as category_name,
       c.slug as category_slug,
       COALESCE((
         SELECT json_build_object(
-          'likes', COUNT(*) FILTER (WHERE r.rating = 1),
-          'dislikes', COUNT(*) FILTER (WHERE r.rating = -1),
-          'reviews_count', COUNT(*)
+          'likes', COALESCE((SELECT COUNT(*) FROM shop_reactions WHERE shop_id = s.id AND rating = 1), 0),
+          'dislikes', COALESCE((SELECT COUNT(*) FROM shop_reactions WHERE shop_id = s.id AND rating = -1), 0),
+          'reactions_count', COALESCE((SELECT COUNT(*) FROM shop_reactions WHERE shop_id = s.id), 0),
+          'reviews_count', COALESCE((SELECT COUNT(*) FROM shop_reviews WHERE shop_id = s.id), 0)
         )
-        FROM reviews r
-        WHERE r.shop_id = s.id
-      ), '{"likes": 0, "dislikes": 0, "reviews_count": 0}'::json) as reviews_summary
+      ), '{"likes": 0, "dislikes": 0, "reactions_count": 0, "reviews_count": 0}'::json) as reviews_summary
     FROM shops s
     INNER JOIN categories c ON s.category_id = c.id
-    WHERE c.slug = $1 
-      AND (s.moderation_status = 'approved' OR s.moderation_status IS NULL)
-      AND (s.is_active = true OR s.is_active IS NULL)
-      AND (s.subscription_expires_at > NOW() OR s.subscription_expires_at IS NULL)
-    ORDER BY s.is_paid DESC, s.created_at DESC
+    WHERE ${whereClause}
+    ORDER BY ${orderBy}
+    LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
   `;
-  const result = await pool.query(query, [categorySlug]);
-  return result.rows;
+  params.push(limit, offset);
+  const result = await pool.query(dataQuery, params);
+  
+  return {
+    data: result.rows,
+    meta: {
+      page,
+      limit,
+      total,
+      has_more: offset + result.rows.length < total,
+    },
+  };
 }
 
 async function getShopBySlug(slug) {
@@ -116,13 +226,12 @@ async function getShopBySlug(slug) {
       c.slug as category_slug,
       COALESCE((
         SELECT json_build_object(
-          'likes', COUNT(*) FILTER (WHERE r.rating = 1),
-          'dislikes', COUNT(*) FILTER (WHERE r.rating = -1),
-          'reviews_count', COUNT(*)
+          'likes', COALESCE((SELECT COUNT(*) FROM shop_reactions WHERE shop_id = s.id AND rating = 1), 0),
+          'dislikes', COALESCE((SELECT COUNT(*) FROM shop_reactions WHERE shop_id = s.id AND rating = -1), 0),
+          'reactions_count', COALESCE((SELECT COUNT(*) FROM shop_reactions WHERE shop_id = s.id), 0),
+          'reviews_count', COALESCE((SELECT COUNT(*) FROM shop_reviews WHERE shop_id = s.id), 0)
         )
-        FROM reviews r
-        WHERE r.shop_id = s.id
-      ), '{"likes": 0, "dislikes": 0, "reviews_count": 0}'::json) as reviews_summary
+      ), '{"likes": 0, "dislikes": 0, "reactions_count": 0, "reviews_count": 0}'::json) as reviews_summary
     FROM shops s
     LEFT JOIN categories c ON s.category_id = c.id
     WHERE s.slug = $1 
@@ -142,13 +251,12 @@ async function getShopById(id) {
       c.slug as category_slug,
       COALESCE((
         SELECT json_build_object(
-          'likes', COUNT(*) FILTER (WHERE r.rating = 1),
-          'dislikes', COUNT(*) FILTER (WHERE r.rating = -1),
-          'reviews_count', COUNT(*)
+          'likes', COALESCE((SELECT COUNT(*) FROM shop_reactions WHERE shop_id = s.id AND rating = 1), 0),
+          'dislikes', COALESCE((SELECT COUNT(*) FROM shop_reactions WHERE shop_id = s.id AND rating = -1), 0),
+          'reactions_count', COALESCE((SELECT COUNT(*) FROM shop_reactions WHERE shop_id = s.id), 0),
+          'reviews_count', COALESCE((SELECT COUNT(*) FROM shop_reviews WHERE shop_id = s.id), 0)
         )
-        FROM reviews r
-        WHERE r.shop_id = s.id
-      ), '{"likes": 0, "dislikes": 0, "reviews_count": 0}'::json) as reviews_summary
+      ), '{"likes": 0, "dislikes": 0, "reactions_count": 0, "reviews_count": 0}'::json) as reviews_summary
     FROM shops s
     LEFT JOIN categories c ON s.category_id = c.id
     WHERE s.id = $1
@@ -159,6 +267,48 @@ async function getShopById(id) {
 
 async function createShop(shopData) {
   const { name, instagram_url, phone, category_id, district, description, cover_image_url, original_image_url, user_id } = shopData;
+  
+  // Проверяем лимит магазинов для пользователя
+  const userShopsQuery = `
+    SELECT tariff
+    FROM shops
+    WHERE user_id = $1
+  `;
+  const userShopsResult = await pool.query(userShopsQuery, [user_id]);
+  const userShops = userShopsResult.rows;
+  
+  // Определяем максимальный тариф среди всех магазинов пользователя
+  let maxTariff = 'start';
+  const tariffPriority = { pro: 3, standard: 2, start: 1 };
+  for (const shop of userShops) {
+    const shopTariff = shop.tariff || 'start';
+    if (tariffPriority[shopTariff] > tariffPriority[maxTariff]) {
+      maxTariff = shopTariff;
+    }
+  }
+  
+  // Определяем лимит на основе максимального тарифа
+  const tariffLimits = {
+    start: 1,
+    standard: 1,
+    pro: 2,
+  };
+  const shopsLimit = tariffLimits[maxTariff] || 1;
+  
+  // Проверяем, не превышен ли лимит
+  if (userShops.length >= shopsLimit) {
+    const tariffNames = {
+      start: 'Start',
+      standard: 'Standard',
+      pro: 'Pro',
+    };
+    const tariffName = tariffNames[maxTariff] || maxTariff;
+    const shopWord = shopsLimit === 1 ? 'магазин' : shopsLimit === 2 ? 'магазина' : 'магазинов';
+    const error = new Error(`Достигнут лимит магазинов. Ваш текущий тариф "${tariffName}" позволяет создать до ${shopsLimit} ${shopWord}.`);
+    error.statusCode = 400;
+    error.code = 'SHOP_LIMIT_REACHED';
+    throw error;
+  }
   
   const uniquenessCheck = await checkInstagramUnique(instagram_url);
   if (!uniquenessCheck.unique) {
@@ -171,10 +321,10 @@ async function createShop(shopData) {
   
   const image_url = cover_image_url || original_image_url;
   
-  // Устанавливаем subscription_expires_at = now() + 45 days
+  // Устанавливаем subscription_expires_at = now() + 30 days и тариф 'start' (бесплатный пробный период)
   const query = `
-    INSERT INTO shops (name, slug, instagram_url, phone, category_id, district, description, image_url, cover_image_url, original_image_url, user_id, is_paid, is_verified, moderation_status, is_active, subscription_expires_at)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW() + INTERVAL '45 days')
+    INSERT INTO shops (name, slug, instagram_url, phone, category_id, district, description, image_url, cover_image_url, original_image_url, user_id, is_paid, is_verified, moderation_status, is_active, subscription_expires_at, tariff)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW() + INTERVAL '30 days', 'start')
     RETURNING *
   `;
   
@@ -242,13 +392,12 @@ async function getUserShops(userId) {
       c.slug as category_slug,
       COALESCE((
         SELECT json_build_object(
-          'likes', COUNT(*) FILTER (WHERE r.rating = 1),
-          'dislikes', COUNT(*) FILTER (WHERE r.rating = -1),
-          'reviews_count', COUNT(*)
+          'likes', COALESCE((SELECT COUNT(*) FROM shop_reactions WHERE shop_id = s.id AND rating = 1), 0),
+          'dislikes', COALESCE((SELECT COUNT(*) FROM shop_reactions WHERE shop_id = s.id AND rating = -1), 0),
+          'reactions_count', COALESCE((SELECT COUNT(*) FROM shop_reactions WHERE shop_id = s.id), 0),
+          'reviews_count', COALESCE((SELECT COUNT(*) FROM shop_reviews WHERE shop_id = s.id), 0)
         )
-        FROM reviews r
-        WHERE r.shop_id = s.id
-      ), '{"likes": 0, "dislikes": 0, "reviews_count": 0}'::json) as reviews_summary
+      ), '{"likes": 0, "dislikes": 0, "reactions_count": 0, "reviews_count": 0}'::json) as reviews_summary
     FROM shops s
     LEFT JOIN categories c ON s.category_id = c.id
     WHERE s.user_id = $1
@@ -283,10 +432,156 @@ async function extendSubscription(id, days) {
   return result.rows[0] || null;
 }
 
+async function updateShopTariff(id, tariff) {
+  if (!['start', 'standard', 'pro'].includes(tariff)) {
+    throw new Error('Invalid tariff');
+  }
+  
+  const query = `
+    UPDATE shops 
+    SET tariff = $1
+    WHERE id = $2
+    RETURNING *
+  `;
+  const result = await pool.query(query, [tariff, id]);
+  return result.rows[0] || null;
+}
+
+async function updateShopTariffAndExtend(id, tariff, days) {
+  if (!['start', 'standard', 'pro'].includes(tariff)) {
+    throw new Error('Invalid tariff');
+  }
+  
+  const query = `
+    UPDATE shops 
+    SET tariff = $1,
+        subscription_expires_at = CASE 
+          WHEN subscription_expires_at > NOW() THEN subscription_expires_at + INTERVAL '${days} days'
+          ELSE NOW() + INTERVAL '${days} days'
+        END
+    WHERE id = $2
+    RETURNING *
+  `;
+  const result = await pool.query(query, [tariff, id]);
+  return result.rows[0] || null;
+}
+
 async function deleteShop(id) {
   const query = 'DELETE FROM shops WHERE id = $1 RETURNING *';
   const result = await pool.query(query, [id]);
   return result.rows[0] || null;
+}
+
+/**
+ * Получение популярных магазинов (по просмотрам и рейтингу)
+ */
+async function getPopularShops(limit = 8) {
+  const query = `
+    SELECT 
+      s.*,
+      c.name as category_name,
+      c.slug as category_slug,
+      COALESCE((
+        SELECT json_build_object(
+          'likes', COALESCE((SELECT COUNT(*) FROM shop_reactions WHERE shop_id = s.id AND rating = 1), 0),
+          'dislikes', COALESCE((SELECT COUNT(*) FROM shop_reactions WHERE shop_id = s.id AND rating = -1), 0),
+          'reactions_count', COALESCE((SELECT COUNT(*) FROM shop_reactions WHERE shop_id = s.id), 0),
+          'reviews_count', COALESCE((SELECT COUNT(*) FROM shop_reviews WHERE shop_id = s.id), 0)
+        )
+      ), '{"likes": 0, "dislikes": 0, "reactions_count": 0, "reviews_count": 0}'::json) as reviews_summary
+    FROM shops s
+    LEFT JOIN categories c ON s.category_id = c.id
+    WHERE (s.moderation_status = 'approved' OR s.moderation_status IS NULL)
+      AND (s.is_active = true OR s.is_active IS NULL)
+      AND (s.subscription_expires_at > NOW() OR s.subscription_expires_at IS NULL)
+    ORDER BY 
+      CASE 
+        WHEN s.tariff = 'pro' THEN 1
+        WHEN s.tariff = 'standard' THEN 2
+        WHEN s.tariff = 'start' THEN 3
+        ELSE 3
+      END,
+      COALESCE(s.views, 0) DESC, 
+      s.created_at DESC
+    LIMIT $1
+  `;
+  const result = await pool.query(query, [limit]);
+  return result.rows;
+}
+
+/**
+ * Получение новых магазинов
+ */
+async function getNewShops(limit = 8) {
+  const query = `
+    SELECT 
+      s.*,
+      c.name as category_name,
+      c.slug as category_slug,
+      COALESCE((
+        SELECT json_build_object(
+          'likes', COALESCE((SELECT COUNT(*) FROM shop_reactions WHERE shop_id = s.id AND rating = 1), 0),
+          'dislikes', COALESCE((SELECT COUNT(*) FROM shop_reactions WHERE shop_id = s.id AND rating = -1), 0),
+          'reactions_count', COALESCE((SELECT COUNT(*) FROM shop_reactions WHERE shop_id = s.id), 0),
+          'reviews_count', COALESCE((SELECT COUNT(*) FROM shop_reviews WHERE shop_id = s.id), 0)
+        )
+      ), '{"likes": 0, "dislikes": 0, "reactions_count": 0, "reviews_count": 0}'::json) as reviews_summary
+    FROM shops s
+    LEFT JOIN categories c ON s.category_id = c.id
+    WHERE (s.moderation_status = 'approved' OR s.moderation_status IS NULL)
+      AND (s.is_active = true OR s.is_active IS NULL)
+      AND (s.subscription_expires_at > NOW() OR s.subscription_expires_at IS NULL)
+    ORDER BY 
+      CASE 
+        WHEN s.tariff = 'pro' THEN 1
+        WHEN s.tariff = 'standard' THEN 2
+        WHEN s.tariff = 'start' THEN 3
+        ELSE 3
+      END,
+      s.created_at DESC
+    LIMIT $1
+  `;
+  const result = await pool.query(query, [limit]);
+  return result.rows;
+}
+
+/**
+ * Получение рекомендуемых магазинов (с высоким рейтингом)
+ */
+async function getRecommendedShops(limit = 8) {
+  const query = `
+    SELECT 
+      s.*,
+      c.name as category_name,
+      c.slug as category_slug,
+      COALESCE((
+        SELECT json_build_object(
+          'likes', COALESCE((SELECT COUNT(*) FROM shop_reactions WHERE shop_id = s.id AND rating = 1), 0),
+          'dislikes', COALESCE((SELECT COUNT(*) FROM shop_reactions WHERE shop_id = s.id AND rating = -1), 0),
+          'reactions_count', COALESCE((SELECT COUNT(*) FROM shop_reactions WHERE shop_id = s.id), 0),
+          'reviews_count', COALESCE((SELECT COUNT(*) FROM shop_reviews WHERE shop_id = s.id), 0)
+        )
+      ), '{"likes": 0, "dislikes": 0, "reactions_count": 0, "reviews_count": 0}'::json) as reviews_summary
+    FROM shops s
+    LEFT JOIN categories c ON s.category_id = c.id
+    WHERE (s.moderation_status = 'approved' OR s.moderation_status IS NULL)
+      AND (s.is_active = true OR s.is_active IS NULL)
+      AND (s.subscription_expires_at > NOW() OR s.subscription_expires_at IS NULL)
+      AND (SELECT COUNT(*) FROM shop_reactions WHERE shop_id = s.id AND rating = 1) > 0
+    ORDER BY 
+      CASE 
+        WHEN s.tariff = 'pro' THEN 1
+        WHEN s.tariff = 'standard' THEN 2
+        WHEN s.tariff = 'start' THEN 3
+        ELSE 3
+      END,
+      (SELECT COUNT(*)::float / NULLIF((SELECT COUNT(*) FROM shop_reactions WHERE shop_id = s.id), 0) * 5 
+       FROM shop_reactions WHERE shop_id = s.id AND rating = 1) DESC,
+      s.created_at DESC
+    LIMIT $1
+  `;
+  const result = await pool.query(query, [limit]);
+  return result.rows;
 }
 
 module.exports = {
@@ -300,6 +595,11 @@ module.exports = {
   updateModerationStatus,
   toggleShopActive,
   extendSubscription,
+  updateShopTariff,
+  updateShopTariffAndExtend,
   deleteShop,
+  getPopularShops,
+  getNewShops,
+  getRecommendedShops,
 };
 

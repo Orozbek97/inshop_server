@@ -7,10 +7,17 @@ const logger = require('./utils/logger');
 const errorHandler = require('./middlewares/errorHandler.middleware');
 const categoriesRoutes = require('./routes/categories.routes');
 const shopsRoutes = require('./routes/shops.routes');
+const productsRoutes = require('./routes/products.routes');
+const productSectionsRoutes = require('./routes/product_sections.routes');
 const authRoutes = require('./routes/auth.routes');
 const reviewsRoutes = require('./routes/reviews.routes');
+const reviewRepliesRoutes = require('./routes/review_replies.routes');
 const favoritesRoutes = require('./routes/favorites.routes');
+const productFavoritesRoutes = require('./routes/product_favorites.routes');
+const viewsRoutes = require('./routes/views.routes');
 const paymentRequestsRoutes = require('./routes/payment_requests.routes');
+const productCategoriesRoutes = require('./routes/product_categories.routes');
+const publicProductsRoutes = require('./routes/public_products.routes');
 
 const app = express();
 
@@ -64,8 +71,9 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 app.use(cookieParser());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Увеличиваем лимит для загрузки изображений в base64 (до 50MB)
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 app.use('/uploads', (req, res, next) => {
   res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
@@ -81,9 +89,16 @@ app.get('/api/health', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/categories', categoriesRoutes);
 app.use('/api/shops', shopsRoutes);
+app.use('/api/shops/:shopId/products', productsRoutes);
+app.use('/api/shops/:shopId/sections', productSectionsRoutes);
 app.use('/api/shops', reviewsRoutes);
+app.use('/api/shops', reviewRepliesRoutes);
 app.use('/api', favoritesRoutes);
+app.use('/api', productFavoritesRoutes);
+app.use('/api', viewsRoutes);
 app.use('/api/payment-requests', paymentRequestsRoutes);
+app.use('/api/product-categories', productCategoriesRoutes);
+app.use('/api/products', publicProductsRoutes);
 
 app.use((req, res) => {
   res.status(404).json({ error: 'Route not found' });

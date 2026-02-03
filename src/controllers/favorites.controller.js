@@ -45,8 +45,22 @@ async function checkFavorite(req, res) {
 async function getUserFavorites(req, res) {
   try {
     const userId = req.user.id;
-    const favorites = await favoritesService.getUserFavorites(userId);
-    res.json(favorites);
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 15));
+    const result = await favoritesService.getUserFavorites(userId, page, limit);
+    
+    // Форматируем reviews_summary для каждого магазина
+    const formattedData = result.data.map(shop => ({
+      ...shop,
+      reviews_summary: typeof shop.reviews_summary === 'string' 
+        ? JSON.parse(shop.reviews_summary) 
+        : shop.reviews_summary
+    }));
+    
+    res.json({
+      data: formattedData,
+      meta: result.meta
+    });
   } catch (error) {
     logger.error('Error fetching user favorites:', error);
     res.status(500).json({ error: 'Internal server error' });

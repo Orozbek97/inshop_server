@@ -2,6 +2,7 @@ const reviewsService = require('../services/reviews.service');
 const shopsService = require('../services/shops.service');
 const logger = require('../utils/logger');
 
+// Получаем отзывы (комментарии) и сводку по реакциям
 async function getShopReviews(req, res) {
   try {
     const { id } = req.params;
@@ -24,6 +25,7 @@ async function getShopReviews(req, res) {
         id: review.user_id,
         name: review.user_name,
       },
+      replies: review.replies || [],
     }));
     
     res.json({
@@ -36,10 +38,26 @@ async function getShopReviews(req, res) {
   }
 }
 
-async function createOrUpdateReview(req, res) {
+// Получаем реакцию пользователя для магазина
+async function getUserReaction(req, res) {
   try {
     const { id } = req.params;
-    const { rating, comment } = req.body;
+    const userId = req.user.id;
+    const shopId = parseInt(id);
+    
+    const reaction = await reviewsService.getUserReaction(shopId, userId);
+    res.json({ reaction: reaction ? { rating: reaction.rating } : null });
+  } catch (error) {
+    logger.error('Error fetching user reaction:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+// Создание или обновление реакции (лайк/дизлайк)
+async function createOrUpdateReaction(req, res) {
+  try {
+    const { id } = req.params;
+    const { rating } = req.body;
     const userId = req.user.id;
     const shopId = parseInt(id);
     
@@ -48,15 +66,64 @@ async function createOrUpdateReview(req, res) {
       return res.status(404).json({ error: 'Shop not found' });
     }
     
-    const existingReview = await reviewsService.getUserReview(shopId, userId);
-    const finalRating = rating !== undefined && rating !== null ? rating : (existingReview ? existingReview.rating : 1);
-    
-    if (finalRating !== 1 && finalRating !== -1) {
+    if (rating !== 1 && rating !== -1) {
       return res.status(400).json({ error: 'Rating must be 1 or -1' });
     }
     
-    const review = await reviewsService.createOrUpdateReview(shopId, userId, finalRating, comment);
+    const reaction = await reviewsService.createOrUpdateReaction(shopId, userId, rating);
+    res.json(reaction);
+  } catch (error) {
+    logger.error('Error creating/updating reaction:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+// Удаление реакции
+async function deleteReaction(req, res) {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+    const shopId = parseInt(id);
     
+    const reaction = await reviewsService.deleteReaction(shopId, userId);
+    if (!reaction) {
+      return res.status(404).json({ error: 'Reaction not found' });
+    }
+    
+    res.status(204).send();
+  } catch (error) {
+    logger.error('Error deleting reaction:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+// Создание или обновление отзыва (комментария)
+async function createOrUpdateReview(req, res) {
+  try {
+    const { id } = req.params;
+    const { comment, rating } = req.body;
+    const userId = req.user.id;
+    const shopId = parseInt(id);
+    
+    const shop = await shopsService.getShopById(shopId);
+    if (!shop) {
+      return res.status(404).json({ error: 'Shop not found' });
+    }
+    
+    if (!comment || !comment.trim()) {
+      return res.status(400).json({ error: 'Comment is required' });
+    }
+    
+    // rating опционален для отзыва
+    let finalRating = null;
+    if (rating !== undefined && rating !== null) {
+      if (rating !== 1 && rating !== -1) {
+        return res.status(400).json({ error: 'Rating must be 1, -1, or null' });
+      }
+      finalRating = rating;
+    }
+    
+    const review = await reviewsService.createOrUpdateReview(shopId, userId, comment, finalRating);
     res.json(review);
   } catch (error) {
     logger.error('Error creating/updating review:', error);
@@ -64,18 +131,21 @@ async function createOrUpdateReview(req, res) {
   }
 }
 
-async function deleteUserReview(req, res) {
+// Удаление отзыва (комментария) по ID
+async function deleteReview(req, res) {
   try {
-    const { id } = req.params;
+    const { id, reviewId } = req.params;
     const userId = req.user.id;
-    const shopId = parseInt(id);
+    const reviewIdInt = parseInt(reviewId);
     
-    const review = await reviewsService.getUserReview(shopId, userId);
+    if (!reviewIdInt) {
+      return res.status(400).json({ error: 'Review ID is required' });
+    }
+    
+    const review = await reviewsService.deleteReview(reviewIdInt, userId);
     if (!review) {
       return res.status(404).json({ error: 'Review not found' });
     }
-    
-    await reviewsService.deleteUserReview(shopId, userId);
     
     res.status(204).send();
   } catch (error) {
@@ -84,6 +154,7 @@ async function deleteUserReview(req, res) {
   }
 }
 
+// Получаем отзывы пользователя
 async function getUserReviews(req, res) {
   try {
     const userId = req.user.id;
@@ -111,6 +182,7 @@ async function getUserReviews(req, res) {
   }
 }
 
+// Получаем магазины, на которые пользователь поставил реакцию
 async function getUserRatedShops(req, res) {
   try {
     const userId = req.user.id;
@@ -136,9 +208,11 @@ async function getUserRatedShops(req, res) {
 
 module.exports = {
   getShopReviews,
+  getUserReaction,
+  createOrUpdateReaction,
+  deleteReaction,
   createOrUpdateReview,
-  deleteUserReview,
+  deleteReview,
   getUserReviews,
   getUserRatedShops,
 };
-

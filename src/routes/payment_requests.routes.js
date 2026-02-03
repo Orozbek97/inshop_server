@@ -5,7 +5,7 @@ const uploadReceipt = require('../middleware/uploadReceipt');
 const authMiddleware = require('../middlewares/auth.middleware');
 const { createPaymentRequestValidator } = require('../validators/payment_requests.validator');
 
-router.post('/', authMiddleware, createPaymentRequestValidator, uploadReceipt.single('receipt'), paymentRequestsController.createPaymentRequest);
+router.post('/', authMiddleware, uploadReceipt.single('receipt'), createPaymentRequestValidator, paymentRequestsController.createPaymentRequest);
 
 // Получение запросов по магазину
 router.get('/shop/:shopId', authMiddleware, paymentRequestsController.getPaymentRequestsByShop);

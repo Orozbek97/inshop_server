@@ -7,10 +7,13 @@ const checkShopOwnership = require('../middlewares/ownership.middleware');
 const { createShopValidator, updateShopValidator } = require('../validators/shops.validator');
 
 router.get('/', shopsController.getAllShops);
+router.get('/popular', shopsController.getPopularShops);
+router.get('/new', shopsController.getNewShops);
+router.get('/recommended', shopsController.getRecommendedShops);
 router.get('/my-shops', authMiddleware, shopsController.getUserShops);
 router.get('/id/:id', authMiddleware, shopsController.getShopById);
-router.post('/', authMiddleware, upload.fields([{ name: 'coverImage', maxCount: 1 }, { name: 'originalImage', maxCount: 1 }]), createShopValidator, shopsController.createShop);
-router.put('/:id', authMiddleware, checkShopOwnership, updateShopValidator, upload.fields([{ name: 'coverImage', maxCount: 1 }, { name: 'originalImage', maxCount: 1 }]), shopsController.updateShop);
+router.post('/', authMiddleware, upload.fields([{ name: 'coverImage', maxCount: 1 }]), createShopValidator, shopsController.createShop);
+router.put('/:id', authMiddleware, checkShopOwnership, upload.fields([{ name: 'coverImage', maxCount: 1 }]), updateShopValidator, shopsController.updateShop);
 router.patch('/:id/toggle-active', authMiddleware, checkShopOwnership, shopsController.toggleShopActive);
 router.delete('/:id', authMiddleware, checkShopOwnership, shopsController.deleteShop);
 router.get('/:slug', shopsController.getShopBySlug);

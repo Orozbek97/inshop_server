@@ -24,14 +24,29 @@ async function getAllShops(req, res) {
 async function getShopsByCategory(req, res) {
   try {
     const { slug } = req.params;
-    const shops = await shopsService.getShopsByCategorySlug(slug);
-    const formattedShops = shops.map(shop => ({
+    const search = req.query.search ? req.query.search.trim() : null;
+    const sortBy = req.query.sort_by || 'popularity';
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+    
+    const result = await shopsService.getShopsByCategorySlug(slug, {
+      search,
+      sortBy,
+      page,
+      limit,
+    });
+    
+    const formattedShops = result.data.map(shop => ({
       ...shop,
       reviews_summary: typeof shop.reviews_summary === 'string' 
         ? JSON.parse(shop.reviews_summary) 
         : shop.reviews_summary
     }));
-    res.json(formattedShops);
+    
+    res.json({
+      data: formattedShops,
+      meta: result.meta,
+    });
   } catch (error) {
     logger.error('Error fetching shops by category', { error });
     res.status(500).json({ error: 'Internal server error' });
@@ -61,11 +76,27 @@ async function getShopBySlug(req, res) {
   }
 }
 
-function generateFilename(originalname) {
-  const timestamp = Date.now();
-  const random = Math.random().toString(36).substring(2, 8);
-  const ext = path.extname(originalname);
-  return `${timestamp}-${random}${ext}`;
+function generateFilename(shopName, originalname) {
+  // Нормализуем название магазина для использования в имени файла
+  let normalizedName = 'shop';
+  if (shopName && typeof shopName === 'string' && shopName.trim()) {
+    normalizedName = shopName
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-zа-яё0-9]+/g, '-') // Заменяем спецсимволы на дефисы
+      .replace(/^-+|-+$/g, '') // Убираем дефисы в начале и конце
+      .substring(0, 50); // Ограничиваем длину
+    
+    // Если после нормализации название пустое, используем дефолтное
+    if (!normalizedName) {
+      normalizedName = 'shop';
+    }
+  }
+  
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').substring(0, 19);
+  const ext = path.extname(originalname) || '.jpg';
+  
+  return `${normalizedName}-${timestamp}${ext}`;
 }
 
 async function createShop(req, res) {
@@ -77,7 +108,6 @@ async function createShop(req, res) {
     }
     
     let cover_image_url = null;
-    let original_image_url = null;
     
     try {
       if (req.files) {
@@ -86,16 +116,8 @@ async function createShop(req, res) {
           if (!file.buffer) {
             return res.status(400).json({ error: 'Invalid file upload' });
           }
-          const filename = generateFilename(file.originalname);
+          const filename = generateFilename(name, file.originalname);
           cover_image_url = await r2Service.uploadFile(file.buffer, filename, 'shops');
-        }
-        if (req.files.originalImage && req.files.originalImage[0]) {
-          const file = req.files.originalImage[0];
-          if (!file.buffer) {
-            return res.status(400).json({ error: 'Invalid file upload' });
-          }
-          const filename = generateFilename(file.originalname);
-          original_image_url = await r2Service.uploadFile(file.buffer, filename, 'shops');
         }
       }
       
@@ -103,9 +125,8 @@ async function createShop(req, res) {
         if (!req.file.buffer) {
           return res.status(400).json({ error: 'Invalid file upload' });
         }
-        const filename = generateFilename(req.file.originalname);
+        const filename = generateFilename(name, req.file.originalname);
         cover_image_url = await r2Service.uploadFile(req.file.buffer, filename, 'shops');
-        original_image_url = cover_image_url;
       }
     } catch (uploadError) {
       logger.error('Error uploading file to R2', { error: uploadError });
@@ -121,8 +142,8 @@ async function createShop(req, res) {
       category_id,
       district: district || null,
       description: description || null,
-      cover_image_url: cover_image_url || original_image_url,
-      original_image_url: original_image_url || cover_image_url,
+      cover_image_url: cover_image_url,
+      original_image_url: cover_image_url, // Сохраняем то же изображение для обратной совместимости
       user_id,
     });
 
@@ -138,6 +159,9 @@ async function createShop(req, res) {
     logger.error('Error creating shop', { error });
     if (error.code === 'DUPLICATE_INSTAGRAM') {
       return res.status(409).json({ error: error.message });
+    }
+    if (error.code === 'SHOP_LIMIT_REACHED') {
+      return res.status(400).json({ error: error.message });
     }
     res.status(500).json({ error: 'Internal server error' });
   }
@@ -215,10 +239,10 @@ async function updateShop(req, res) {
     };
     
     let cover_image_url = existingShop.cover_image_url;
-    let original_image_url = existingShop.original_image_url;
     
     if (req.files) {
       if (req.files.coverImage && req.files.coverImage[0]) {
+        // Удаляем старые изображения
         if (existingShop.cover_image_url) await deleteImageFile(existingShop.cover_image_url);
         if (existingShop.original_image_url && existingShop.original_image_url !== existingShop.cover_image_url) {
           await deleteImageFile(existingShop.original_image_url);
@@ -226,24 +250,16 @@ async function updateShop(req, res) {
         if (existingShop.image_url && existingShop.image_url !== existingShop.cover_image_url && existingShop.image_url !== existingShop.original_image_url) {
           await deleteImageFile(existingShop.image_url);
         }
+        
         const file = req.files.coverImage[0];
-        const filename = generateFilename(file.originalname);
+        const shopName = name || existingShop.name;
+        const filename = generateFilename(shopName, file.originalname);
         cover_image_url = await r2Service.uploadFile(file.buffer, filename, 'shops');
-        original_image_url = cover_image_url;
-      }
-      
-      if (req.files.originalImage && req.files.originalImage[0]) {
-        if (existingShop.original_image_url) await deleteImageFile(existingShop.original_image_url);
-        const file = req.files.originalImage[0];
-        const filename = generateFilename(file.originalname);
-        original_image_url = await r2Service.uploadFile(file.buffer, filename, 'shops');
-        if (!cover_image_url) {
-          cover_image_url = original_image_url;
-        }
       }
     }
     
     if (req.file) {
+      // Удаляем старые изображения
       if (existingShop.cover_image_url) await deleteImageFile(existingShop.cover_image_url);
       if (existingShop.original_image_url && existingShop.original_image_url !== existingShop.cover_image_url) {
         await deleteImageFile(existingShop.original_image_url);
@@ -252,9 +268,9 @@ async function updateShop(req, res) {
         await deleteImageFile(existingShop.image_url);
       }
       
-      const filename = generateFilename(req.file.originalname);
+      const shopName = name || existingShop.name;
+      const filename = generateFilename(shopName, req.file.originalname);
       cover_image_url = await r2Service.uploadFile(req.file.buffer, filename, 'shops');
-      original_image_url = cover_image_url;
     }
     
     const deliveryValue = delivery === 'true' || delivery === true || delivery === '1' || delivery === 1;
@@ -267,7 +283,6 @@ async function updateShop(req, res) {
     }
     
     const finalCoverImageUrl = cover_image_url !== undefined ? cover_image_url : existingShop.cover_image_url;
-    const finalOriginalImageUrl = original_image_url !== undefined ? original_image_url : existingShop.original_image_url;
     
     const shop = await shopsService.updateShop(parseInt(id), {
       name: name.trim(),
@@ -277,7 +292,7 @@ async function updateShop(req, res) {
       district: district && district.trim() ? district.trim() : null,
       description: description && description.trim() ? description.trim() : null,
       cover_image_url: finalCoverImageUrl,
-      original_image_url: finalOriginalImageUrl,
+      original_image_url: finalCoverImageUrl, // Используем то же изображение для обратной совместимости
       delivery: deliveryValue,
     });
     
@@ -375,6 +390,57 @@ async function deleteShop(req, res) {
   }
 }
 
+async function getPopularShops(req, res) {
+  try {
+    const limit = Math.min(20, Math.max(1, parseInt(req.query.limit, 10) || 8));
+    const shops = await shopsService.getPopularShops(limit);
+    const formattedShops = shops.map(shop => ({
+      ...shop,
+      reviews_summary: typeof shop.reviews_summary === 'string' 
+        ? JSON.parse(shop.reviews_summary) 
+        : shop.reviews_summary
+    }));
+    res.json(formattedShops);
+  } catch (error) {
+    logger.error('Error getting popular shops:', error);
+    res.status(500).json({ error: 'Failed to get popular shops' });
+  }
+}
+
+async function getNewShops(req, res) {
+  try {
+    const limit = Math.min(20, Math.max(1, parseInt(req.query.limit, 10) || 8));
+    const shops = await shopsService.getNewShops(limit);
+    const formattedShops = shops.map(shop => ({
+      ...shop,
+      reviews_summary: typeof shop.reviews_summary === 'string' 
+        ? JSON.parse(shop.reviews_summary) 
+        : shop.reviews_summary
+    }));
+    res.json(formattedShops);
+  } catch (error) {
+    logger.error('Error getting new shops:', error);
+    res.status(500).json({ error: 'Failed to get new shops' });
+  }
+}
+
+async function getRecommendedShops(req, res) {
+  try {
+    const limit = Math.min(20, Math.max(1, parseInt(req.query.limit, 10) || 8));
+    const shops = await shopsService.getRecommendedShops(limit);
+    const formattedShops = shops.map(shop => ({
+      ...shop,
+      reviews_summary: typeof shop.reviews_summary === 'string' 
+        ? JSON.parse(shop.reviews_summary) 
+        : shop.reviews_summary
+    }));
+    res.json(formattedShops);
+  } catch (error) {
+    logger.error('Error getting recommended shops:', error);
+    res.status(500).json({ error: 'Failed to get recommended shops' });
+  }
+}
+
 module.exports = {
   getAllShops,
   getShopsByCategory,
@@ -385,5 +451,8 @@ module.exports = {
   updateShop,
   toggleShopActive,
   deleteShop,
+  getPopularShops,
+  getNewShops,
+  getRecommendedShops,
 };
 
