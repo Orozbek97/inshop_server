@@ -343,7 +343,7 @@ async function getPopularProducts(limit = 12) {
       p.*,
       json_build_object(
         'id', s.id,
-        'name', s.name,
+        'title', s.name,
         'slug', s.slug
       ) AS shop
     FROM products p
@@ -382,7 +382,7 @@ async function getNewProducts(limit = 12) {
       p.*,
       json_build_object(
         'id', s.id,
-        'name', s.name,
+        'title', s.name,
         'slug', s.slug
       ) AS shop
     FROM products p
@@ -419,7 +419,7 @@ async function getDiscountedProducts(limit = 12) {
       p.*,
       json_build_object(
         'id', s.id,
-        'name', s.name,
+        'title', s.name,
         'slug', s.slug
       ) AS shop
     FROM products p
@@ -459,7 +459,7 @@ async function getRecommendedProducts(limit = 12) {
       p.*,
       json_build_object(
         'id', s.id,
-        'name', s.name,
+        'title', s.name,
         'slug', s.slug
       ) AS shop,
       COALESCE((SELECT COUNT(*)::int FROM product_favorites WHERE product_id = p.id), 0) AS favorites_count
